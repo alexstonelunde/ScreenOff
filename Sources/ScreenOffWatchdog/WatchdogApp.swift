@@ -43,14 +43,20 @@ final class WatchdogRuntime: NSObject {
         self.transaction = DisplayTransaction(executable: URL(fileURLWithPath: CommandLine.arguments[0]))
     }
 
-    func start() {
+    func start(acceptingCommands: Bool = true) {
         observeActivity()
         let context = Unmanaged.passUnretained(self).toOpaque()
         guard CGDisplayRegisterReconfigurationCallback(displayChanged, context) == .success else { exit(69) }
-        let source = DispatchSource.makeReadSource(fileDescriptor: STDIN_FILENO, queue: .main)
-        source.setEventHandler { [weak self] in self?.readCommands() }
-        source.resume()
-        reader = source
+        if acceptingCommands {
+            let source = DispatchSource.makeReadSource(fileDescriptor: STDIN_FILENO, queue: .main)
+            source.setEventHandler { [weak self] in self?.readCommands() }
+            source.resume()
+            reader = source
+        } else {
+            // Detached CLI recovery has no command channel and can only restore.
+            pipeOpen = false
+            restore()
+        }
         let timer = Timer(timeInterval: 0.75, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
         }
@@ -154,8 +160,8 @@ final class WatchdogRuntime: NSObject {
             observers.append(workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated {
                     guard let self else { return }
-                    let waking = awake && !self.screensAwake
-                    if awake != self.screensAwake { self.activityGeneration += 1 }
+                    let waking = awake && (!self.screensAwake || !self.systemAwake)
+                    if awake != self.screensAwake || waking { self.activityGeneration += 1 }
                     self.screensAwake = awake
                     if awake { self.systemAwake = true }
                     if waking { self.resumed() }
@@ -169,8 +175,8 @@ final class WatchdogRuntime: NSObject {
             observers.append(workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated {
                     guard let self else { return }
-                    let waking = awake && !self.systemAwake
-                    if awake != self.systemAwake { self.activityGeneration += 1 }
+                    let waking = awake && (!self.systemAwake || !self.screensAwake)
+                    if awake != self.systemAwake || waking { self.activityGeneration += 1 }
                     self.systemAwake = awake
                     self.heartbeatLease.systemChanged(awake: awake, now: ProcessInfo.processInfo.systemUptime)
                     if awake { self.screensAwake = true }
@@ -228,6 +234,32 @@ enum WatchdogApp {
         let arguments = CommandLine.arguments
         guard arguments.count >= 3, let parent = Int32(arguments[2]), parent > 1,
               getppid() == parent else { exit(64) }
+        // Read-only probes run in a disposable process, including the first
+        // recovery observation. No WindowServer query executes in the CLI parent.
+        if arguments[1] == "--snapshot" || arguments[1] == "--restore-watch" {
+            guard let request = RecoveryHelperRequest.parse(Array(arguments.dropFirst()), parent: getppid()) else { exit(64) }
+            switch request {
+            case .snapshot:
+                do {
+                    let data = try JSONEncoder().encode(DisplayHardware().snapshot())
+                    try FileHandle.standardOutput.write(contentsOf: data)
+                    exit(0)
+                } catch { exit(1) }
+            case .restore(let seed):
+                let app = NSApplication.shared
+                app.setActivationPolicy(.prohibited)
+                let runtime = WatchdogRuntime(parent: parent, restoring: true, seed: seed)
+                // Ownership and the enable-only obligation are established before
+                // acknowledging. The following startup/query may block, but the
+                // supervisor survives closed pipes and the CLI's bounded exit.
+                _ = RecoveryProcess.acceptance.withUnsafeBytes {
+                    Darwin.write(STDOUT_FILENO, $0.baseAddress, $0.count)
+                }
+                runtime.start(acceptingCommands: false)
+                withExtendedLifetime(runtime) { app.run() }
+                return
+            }
+        }
         let app = NSApplication.shared
         app.setActivationPolicy(.prohibited)
         if arguments[1] == "--transaction" {

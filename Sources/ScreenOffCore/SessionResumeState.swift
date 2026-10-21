@@ -27,15 +27,16 @@ struct SessionResumeState {
     }
 
     mutating func setScreensAwake(_ awake: Bool, now: TimeInterval) {
-        guard screensAwake != awake else { return }
+        guard screensAwake != awake || awake && !systemAwake else { return }
         screensAwake = awake
         if awake { systemAwake = true }
         changed(now: now)
     }
 
     mutating func setSystemAwake(_ awake: Bool, now: TimeInterval) {
-        guard systemAwake != awake else { return }
+        guard systemAwake != awake || awake && !screensAwake else { return }
         systemAwake = awake
+        if awake { screensAwake = true }
         changed(now: now)
     }
 

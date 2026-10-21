@@ -1,4 +1,8 @@
-ScreenOff 1.3.2 — your MacBook display, under your control
+ScreenOff 1.3.3, build 14 — fork prerelease RC1
+
+Download: https://github.com/alexstonelunde/ScreenOff/releases/tag/v1.3.3-rc.1
+This release candidate includes the four audited recovery fixes. Physical
+sleep/wake acceptance on the Belkin/LG setup remains outstanding.
 
 INSTALLATION
 When updating, first quit the old version using the power button in its window.
@@ -25,12 +29,12 @@ option being enabled corresponds to “Use built-in display” being off.
 
 If Gatekeeper blocks the app, attempt to launch it, then open
 System Settings → Privacy & Security → Open Anyway.
-The build is ad-hoc signed, without an Apple Developer certificate or notarization.
+The build is ad-hoc signed, without an Apple Developer certificate or notarisation.
 Do not disable macOS security or SIP. Running the app needs no administrator password.
 
 HOW IT WORKS
 Disabling removes the built-in display from the active macOS desktop.
-Windows move to the external monitor. Brightness and display colors are unchanged.
+Windows move to the external monitor. Brightness and display colours are unchanged.
 Disconnecting the last external monitor restores the built-in display.
 An open lid keeps the keyboard, trackpad, camera and Touch ID accessible.
 Quitting ScreenOff restores the display. Use the power button in settings to quit.
@@ -42,7 +46,11 @@ If display mirroring is enabled, turn it off in macOS Display settings first.
 Windows may remain on the external monitor after the built-in display returns.
 
 RECOVERY
-Locking the Mac immediately requests restoration while the lid is still open.
+A confirmed disable is preserved while the same user owns the locked console
+and through display/system sleep. If macOS reactivates the internal panel after
+wake, the helper can reapply disabling after checking the external monitor.
+Closing the lid or losing console ownership requests recovery; with the lid
+closed, recovery waits until it opens.
 Display changes run in an isolated child with a three-second timeout; the rescue
 supervisor remains responsive if a system call stalls. Sleep or lid closure can
 cancel the child. A timed-out change waits for a real wake/lid/session/topology
@@ -66,8 +74,16 @@ is attempted until restoration is confirmed.
 If the display does not return, open the lid, reconnect the external monitor
 and run this command in Terminal:
   /Applications/ScreenOff.app/Contents/MacOS/ScreenOff --recover
+The command observes recovery within a shared twelve-second budget using
+disposable read-only helpers. An accepted recovery supervisor can continue after
+the command exits. A helper that misses all its own wake notifications may still
+need a recognised wake or lid transition before recovery resumes.
 If macOS no longer responds to the API, log out or restart the Mac.
 
 UNINSTALLING
+If you configured any optional Night Shift exclusions, restore them in ScreenOff
+and restart first. These model-specific display overrides persist after quitting
+or deleting the app; applying or restoring an override asks for administrator
+approval and a restart.
 Turn on “Use built-in display,” quit ScreenOff with the power button and delete
 ScreenOff.app from Applications. No system drivers are installed.

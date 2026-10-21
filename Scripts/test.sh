@@ -36,3 +36,11 @@ xcrun swiftc -swift-version 5 -module-cache-path .build/module-cache \
     Sources/ScreenOffCore/DisplayEnvironment.swift Sources/ScreenOffCore/WatchdogRules.swift \
     Tests/SessionPolicyTests.swift -o .build/session-policy-tests
 .build/session-policy-tests
+
+xcrun swiftc -swift-version 5 -module-cache-path .build/module-cache \
+    Sources/ScreenOffCore/DisplayPolicy.swift Sources/ScreenOffCore/RecoveryCommand.swift \
+    Tests/RecoveryQueryFixture.swift -o .build/recovery-query-fixture
+xcrun swiftc -swift-version 5 -module-cache-path .build/module-cache \
+    Sources/ScreenOffCore/DisplayPolicy.swift Sources/ScreenOffCore/RecoveryCommand.swift \
+    Tests/RecoveryCommandTests.swift -o .build/recovery-command-tests
+.build/recovery-command-tests "$PWD/.build/recovery-query-fixture" "$PWD/Sources/ScreenOff/App.swift"

@@ -156,30 +156,22 @@ enum ScreenOffApp {
             } catch { fputs("\(error.localizedDescription)\n", stderr); exit(1) }
         }
         if arguments.contains("--recover") {
-            _ = NSApplication.shared
-            DistributedNotificationCenter.default().postNotificationName(
-                DisplayController.recoverNotification, object: nil, userInfo: nil, deliverImmediately: true)
-            let hardware = DisplayHardware()
-            let recoveryGuard = RecoveryGuard()
-            if let snapshot = try? hardware.snapshot() { recoveryGuard.remember(snapshot) }
-            // A running app/helper already owns restoration. Observe its result
-            // instead of adding a third competing WindowServer configuration.
-            let deadline = Date().addingTimeInterval(12)
-            var restored = false
-            repeat {
-                let owners = NSRunningApplication.runningApplications(
-                    withBundleIdentifier: "com.gevorg.screenoff").filter {
-                        $0.processIdentifier != getpid() && !$0.isTerminated
-                    }
-                if owners.isEmpty && !recoveryGuard.isRunning && recoveryGuard.canStart {
-                    try? recoveryGuard.start(restoring: true)
+            guard let executable = Bundle.main.executableURL?
+                .deletingLastPathComponent().appendingPathComponent("ScreenOffWatchdog") else {
+                fputs("The recovery helper could not be located.\n", stderr)
+                exit(1)
+            }
+            let result = RecoveryCommand(executable: executable).run(notify: {
+                DistributedNotificationCenter.default().postNotificationName(
+                    DisplayController.recoverNotification, object: nil, userInfo: nil, deliverImmediately: true)
+            }, ownerIsRunning: {
+                // Let a running UI app and its helper own display transactions.
+                NSRunningApplication.runningApplications(withBundleIdentifier: "com.gevorg.screenoff").contains {
+                    $0.processIdentifier != getpid() && !$0.isTerminated
                 }
-                RunLoop.current.run(until: Date().addingTimeInterval(0.2))
-                restored = (try? hardware.snapshot().builtInIsRestored) == true
-            } while !restored && Date() < deadline
-            recoveryGuard.stop()
-            print(restored ? "Built-in display restored." : "Recovery failed. Close and reopen the lid, or reconnect the external display.")
-            exit(restored ? 0 : 1)
+            })
+            print(result.message)
+            exit(result == .restored ? 0 : 1)
         }
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)

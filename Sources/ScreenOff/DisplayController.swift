@@ -492,6 +492,7 @@ extension DisplayController {
         requestEvaluation()
         if let evaluation { await evaluation.value }
     }
+    func testEmergencyRestore() { emergencyRestore() }
     func testSleep() { prepareForSleep() }
     func testSession(active: Bool) { sessionChanged(active: active) }
     func testLock() { sessionLocked() }
