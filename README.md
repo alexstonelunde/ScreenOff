@@ -2,9 +2,11 @@
 
 A small native MacBook app that disables the built-in display while you use an external monitor. Built with Swift, SwiftUI and AppKit, with no third-party dependencies.
 
-**[Download for Mac](https://github.com/GevorgSogomonian/ScreenOff/releases/latest)** · [Report an issue](https://github.com/GevorgSogomonian/ScreenOff/issues/new/choose) · [Contribute](CONTRIBUTING.md)
+**[Download 1.3.3 RC1 for Mac](https://github.com/alexstonelunde/ScreenOff/releases/tag/v1.3.3-rc.1)** · [Upstream project](https://github.com/GevorgSogomonian/ScreenOff) · [Contribute](CONTRIBUTING.md)
 
-**Apple Silicon (M1 or later), macOS 13+.** Download the DMG from the latest release's Assets section. The app is ad-hoc signed and is not notarized by Apple; installation instructions are below.
+**Fork prerelease: version 1.3.3, build 14.** This release candidate includes the four audited recovery fixes. Physical sleep/wake acceptance on the Belkin/LG setup remains outstanding. See the [release notes](Docs/Release-1.3.3.md).
+
+**Apple Silicon (M1 or later), macOS 13+.** Download the DMG from the prerelease's Assets section. The app is ad-hoc signed and is not notarised by Apple; installation instructions are below.
 
 The main switch is **“Use built-in display” with an external monitor**.
 
@@ -19,7 +21,7 @@ The power button in the window quits ScreenOff and restores the built-in display
 
 ## Installation
 
-1. Download `ScreenOff-1.3.2-arm64.dmg` from [Releases](https://github.com/GevorgSogomonian/ScreenOff/releases/latest). When updating, first quit the old ScreenOff using the power button in its window.
+1. Download `ScreenOff-1.3.3-arm64.dmg` from the [1.3.3 RC1 prerelease](https://github.com/alexstonelunde/ScreenOff/releases/tag/v1.3.3-rc.1). When updating, first quit the old ScreenOff using the power button in its window.
 2. Drag **ScreenOff.app → Applications** and replace the previous app if prompted.
 3. Open ScreenOff to see its settings. Use Spotlight or Applications in Finder to reopen the window later.
 
