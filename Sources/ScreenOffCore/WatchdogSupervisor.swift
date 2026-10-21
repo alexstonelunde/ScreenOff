@@ -15,6 +15,7 @@ final class WatchdogSupervisor {
     private(set) var generation = 0
     private(set) var retryBlocked = false
     private var retryAt: TimeInterval = -.infinity
+    private var activityEpoch = 0
     private var workerEnabling = false
     private var consecutiveRestored = 0
     private var lastConfirmation: TimeInterval = -.infinity
@@ -69,14 +70,14 @@ final class WatchdogSupervisor {
     }
 
     func screensChanged(awake: Bool) {
-        guard screensAwake != awake else { return }
+        guard screensAwake != awake || awake && !systemAwake else { return }
         screensAwake = awake
         if awake { systemAwake = true; allowRetry() }
         else { suspend(recover: false) }
     }
 
     func systemChanged(awake: Bool) {
-        guard systemAwake != awake else { return }
+        guard systemAwake != awake || awake && !screensAwake else { return }
         systemAwake = awake
         if awake { screensAwake = true; allowRetry() }
         else { suspend(recover: false) }
@@ -147,12 +148,14 @@ final class WatchdogSupervisor {
     }
 
     private func allowRetry() {
+        activityEpoch += 1
         retryBlocked = false
         awaitingVerification = false
         retryAt = clock() + 0.5
     }
 
     private func launch(on: Bool) {
+        let launchedEpoch = activityEpoch
         workerEnabling = on
         if !on { disabledConfirmed = false }
         snapshotAfterTransaction = false
@@ -161,11 +164,16 @@ final class WatchdogSupervisor {
             try worker.start(DisplayTransactionRequest(on: on, lastKnownBuiltIn: seed)) { [weak self] result in
                 guard let self else { return }
                 self.generation += 1
-                self.retryAt = self.clock() + (result == .cancelled || !on && result == .completed ? 0 : 2)
-                self.awaitingVerification = on && result == .completed
-                if result == .timedOut || result == .deferred {
-                    self.retryBlocked = true
+                // A wake/lid/topology transition can arrive before the cancelled
+                // child is reaped. Its newer retry permission must survive the
+                // old child's result, including its cooldown and timeout block.
+                if self.activityEpoch == launchedEpoch {
+                    self.retryAt = self.clock() + (result == .cancelled || !on && result == .completed ? 0 : 2)
+                    if result == .timedOut || result == .deferred {
+                        self.retryBlocked = true
+                    }
                 }
+                self.awaitingVerification = on && result == .completed
                 if result != .completed || !on && self.recoveryRequested {
                     self.requestRestore()
                 }
