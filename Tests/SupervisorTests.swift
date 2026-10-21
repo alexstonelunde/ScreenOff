@@ -45,7 +45,104 @@ enum SupervisorTests {
         checks += 1
         guard condition() else { fatalError("FAIL: \(message)", file: file, line: line) }
     }
+    static func testLateCompletion() {
+        for result in [DisplayTransactionResult.deferred, .timedOut] {
+            for transition in ["system", "screens", "lid", "console", "topology", "none"] {
+                var now: TimeInterval = 0
+                let worker = ControlledTransaction()
+                let s = WatchdogSupervisor(snapshot: state(on: false), worker: worker,
+                    clock: { now }, restored: {})
+                s.requestRestore()
+                s.tick()
+                expect(worker.requests.count == 1, "initial recovery starts: \(transition)/\(result)")
+                if transition == "system" { s.systemChanged(awake: false); s.systemChanged(awake: true) }
+                if transition == "screens" { s.screensChanged(awake: false); s.screensChanged(awake: true) }
+                if transition == "lid" { s.lidChanged(closed: true); s.lidChanged(closed: false) }
+                if transition == "console" { s.sessionChanged(active: false); s.sessionChanged(active: true) }
+                if transition == "topology" { s.observe(state(on: false, external: false)) }
+                // Unchanged positive notifications are not new activity.
+                s.systemChanged(awake: true)
+                s.screensChanged(awake: true)
+                s.sessionChanged(active: true)
+                now = 1
+                s.requestRestore()
+                s.tick()
+                expect(worker.isRunning && worker.requests.count == 1,
+                       "new activity cannot overlap the unreaped worker: \(transition)/\(result)")
+                worker.finish(result)
+                if transition == "none" {
+                    expect(s.retryBlocked, "late completion without new activity remains inhibited: \(result)")
+                    for _ in 0..<20 {
+                        now += 3
+                        s.systemChanged(awake: true)
+                        s.screensChanged(awake: true)
+                        s.sessionChanged(active: true)
+                        s.requestRestore()
+                        s.tick()
+                    }
+                    expect(worker.requests.count == 1, "duplicates cannot renew inhibited completion: \(result)")
+                    continue
+                }
+                expect(!s.retryBlocked, "older \(result) cannot revoke newer \(transition) retry permission")
+                s.tick()
+                expect(worker.requests.count == 2 && worker.requests.last?.on == true,
+                       "new activity survives old completion and permits recovery: \(transition)/\(result)")
+                s.tick()
+                expect(worker.requests.count == 2, "replacement recovery remains serialised: \(transition)/\(result)")
+                worker.finish(result)
+                now += 10
+                s.tick()
+                expect(s.retryBlocked && worker.requests.count == 2,
+                       "new attempt can inhibit itself until another transition: \(transition)/\(result)")
+            }
+        }
+    }
+
+    static func testCrossDimensionWake() {
+        var now: TimeInterval = 0
+        let worker = ControlledTransaction()
+        let s = WatchdogSupervisor(snapshot: state(on: false), worker: worker,
+            clock: { now }, restored: {})
+        s.requestRestore()
+        s.tick()
+        worker.finish(.timedOut)
+        s.systemChanged(awake: false) // No screensDidSleep notification arrived.
+        s.sessionChanged(active: true) // Same-owner polling cannot wake a sleeping Mac.
+        now = 3
+        s.tick()
+        expect(s.retryBlocked && worker.requests.count == 1,
+               "same-owner observation cannot repair sleep flags or renew recovery")
+        s.screensChanged(awake: true) // Its own flag is already true.
+        expect(!s.retryBlocked, "screen wake reconciles stale system sleep and permits recovery")
+        s.tick()
+        expect(worker.requests.count == 1, "cross-dimension wake preserves the settling delay")
+        now += 1
+        s.tick()
+        expect(worker.requests.count == 2, "screen wake alone resumes after missing screen-sleep notification")
+        worker.finish(.timedOut)
+        for _ in 0..<20 {
+            now += 3
+            s.screensChanged(awake: true)
+            s.systemChanged(awake: true)
+            s.tick()
+        }
+        expect(s.retryBlocked && worker.requests.count == 2,
+               "fully unchanged wake notifications cannot renew retries")
+    }
+
     static func main() {
+        if CommandLine.arguments.contains("--late-completion") {
+            testLateCompletion()
+            print("PASS: \(checks) late-completion and serialisation checks")
+            return
+        }
+        if CommandLine.arguments.contains("--cross-wake") {
+            testCrossDimensionWake()
+            print("PASS: \(checks) cross-dimension wake checks")
+            return
+        }
+        testLateCompletion()
+        testCrossDimensionWake()
         // Exact reported sequence, including closing the lid while enable is
         // stuck and unplugging before any recovery confirmation is available.
         for restoreFinishedBeforeClosing in [false, true] {

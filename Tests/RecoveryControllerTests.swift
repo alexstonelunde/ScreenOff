@@ -146,6 +146,21 @@ enum RecoveryControllerTests {
     }
 
     static func main() async {
+        if CommandLine.arguments.contains("--wake-regression") {
+            await testMissingScreenWake()
+            print("PASS: \(checks) missing-screen-wake controller checks")
+            return
+        }
+        if CommandLine.arguments.contains("--emergency-wake-regression") {
+            await testEmergencyWithStaleScreenSleep()
+            print("PASS: \(checks) emergency wake controller checks")
+            return
+        }
+        if CommandLine.arguments.contains("--resume-state-regression") {
+            testResumeActivityReconciliation()
+            print("PASS: \(checks) resume activity reconciliation checks")
+            return
+        }
         if CommandLine.arguments.contains("--night-probe") {
             await nightProbe()
             return
@@ -331,6 +346,9 @@ enum RecoveryControllerTests {
             expect(!confirmed && helper.restoreRequests > 0 && helper.stops == 1,
                    "quit with unavailable panel hands recovery to helper via command and EOF")
         }
+        testResumeActivityReconciliation()
+        await testMissingScreenWake()
+        await testEmergencyWithStaleScreenSleep()
         await testRecordedHotplug()
         await testNightRecovery()
         await testFailedLockedWake()
@@ -338,6 +356,97 @@ enum RecoveryControllerTests {
         await testConsoleReturnRecovery()
         await testRecoveryOwnership()
         print("PASS: \(checks) controller and persistent-recovery checks (simulated hardware only)")
+    }
+
+    static func testResumeActivityReconciliation() {
+        var activity = SessionResumeState()
+        activity.setScreensAwake(false, now: 0)
+        activity.setSystemAwake(false, now: 1)
+        activity.setSessionActive(true, now: 2)
+        expect(activity.suspended, "unchanged console ownership cannot wake sleeping displays")
+        activity.setSystemAwake(true, now: 3)
+        expect(!activity.suspended, "system wake repairs both awake dimensions without a screen-wake callback")
+        expect(!activity.ready(now: 4.9), "reconciled system wake preserves settling")
+        activity.setSystemAwake(true, now: 4)
+        activity.setScreensAwake(true, now: 4.5)
+        expect(activity.ready(now: 5), "unchanged duplicate wake cannot postpone a pending resume")
+        activity.consume()
+        activity.setSystemAwake(true, now: 6)
+        activity.setScreensAwake(true, now: 6)
+        expect(!activity.pending, "duplicate wake cannot grant another consumed resume opportunity")
+        activity.setSystemAwake(false, now: 7)
+        activity.setScreensAwake(true, now: 8) // Already true; system flag contradicts it.
+        expect(!activity.suspended && activity.ready(now: 10),
+               "screen wake repairs stale system sleep despite unchanged own flag")
+        activity.setLidOpen(false, now: 11)
+        activity.setSystemAwake(true, now: 12)
+        expect(activity.suspended && !activity.ready(now: 20), "positive wake does not override closed lid")
+        activity.setLidOpen(true, now: 21)
+        activity.setSessionActive(false, now: 22)
+        activity.setScreensAwake(false, now: 23)
+        activity.setSystemAwake(true, now: 24)
+        expect(activity.suspended && !activity.ready(now: 30), "positive wake does not override console ownership")
+    }
+
+    static func testMissingScreenWake() async {
+        var now: TimeInterval = 0
+        let (controller, hardware, helper) = make(recoveryClock: { now }, sessionProbe: { true })
+        await controller.testEvaluate()
+        controller.testScreens(awake: false)
+        controller.testSleep()
+        await controller.testEvaluate()
+        let originalCalls = hardware.calls.count
+        hardware.state = fixture() // macOS reactivated the panel during sleep.
+        now = 1
+        await controller.testEvaluate() // Owner polling is deliberately unchanged.
+        expect(hardware.calls.count == originalCalls, "same-owner polling cannot wake sleeping controller")
+        controller.testWake() // No screensDidWake notification follows.
+        await controller.testEvaluate()
+        expect(hardware.state.builtInIsOn, "system wake waits for resume settling before reapplying OFF")
+        now = 4
+        controller.testFinishSettling()
+        await controller.testEvaluate()
+        expect(!hardware.state.builtInIsOn && helper.starts == [false] && helper.restoreRequests == 0,
+               "system wake without screen wake reapplies OFF using the retained helper")
+        for _ in 0..<10 {
+            now += 3
+            controller.testWake()
+            controller.testScreens(awake: true)
+            controller.testFinishSettling()
+            await controller.testEvaluate()
+        }
+        expect(hardware.calls.count == originalCalls + 1,
+               "duplicate wake cannot add transactions after successful resume")
+    }
+
+    static func testEmergencyWithStaleScreenSleep() async {
+        for wakeFirst in [false, true] {
+            var now: TimeInterval = 0
+            let (controller, hardware, helper) = make(recoveryClock: { now })
+            await controller.testEvaluate()
+            controller.testScreens(awake: false)
+            controller.testSleep()
+            await controller.testEvaluate()
+            if wakeFirst { controller.testWake(); await controller.testEvaluate() }
+            expect(!hardware.state.builtInIsOn && helper.restoreRequests == 0,
+                   "sleeping controller retains disabled panel before explicit recovery")
+            controller.testEmergencyRestore()
+            await controller.testEvaluate()
+            // This fixture completes restoration immediately. The regression
+            // proves controller delegation, not a real helper waking without
+            // any of its own wake notifications.
+            expect(helper.restoreRequests > 0,
+                   "explicit emergency recovery forwards despite stale screen-sleep flag: wakeFirst=\(wakeFirst)")
+            expect(hardware.mainEnableCalls == 0, "emergency recovery stays delegated to its separate helper")
+            await controller.testEvaluate()
+            controller.testSleep()
+            controller.testWake()
+            now = 10
+            controller.testFinishSettling()
+            await controller.testEvaluate()
+            expect(hardware.state.builtInIsRestored && hardware.calls.filter { !$0.on }.count == 1,
+                   "subsequent wake preserves the explicit emergency recovery hold")
+        }
     }
 
     static func testRecoveryOwnership() async {
